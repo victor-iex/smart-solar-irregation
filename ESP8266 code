@@ -1,0 +1,134 @@
+#include <ESP8266WiFi.h>
+#include <WiFiClient.h>
+#include <ESP8266WebServer.h>
+
+// Wi-Fi Credentials - Change these to match your local network
+const char* ssid = "iPhone";
+const char* password = "yokesh<3";
+
+// Create Web Server instance on port 80
+ESP8266WebServer server(80);
+
+// Pin Definitions
+const int SOIL_SENSOR_PIN = A0;   
+const int PUMP_PIN = 4;           // Connects to BC547 Base via 1k ohm resistor
+
+// Threshold & Timing Constants
+const int DRY_THRESHOLD = 700;        // >500 means Dry (1024), <500 means Wet (~400-600)
+const unsigned long DRY_DELAY_TIME = 5000;  // Must be dry for 5 seconds to start
+const unsigned long RUNTIME_LIMIT = 10000;  // Max time pump runs per cycle (10s)
+
+// State Tracking Variables
+bool isPumpRunning = false;
+unsigned long dryStartMillis = 0;   // Tracks when the soil first became dry
+unsigned long pumpStartMillis = 0;  // Tracks how long the pump has been running
+int globalMoistureValue = 0;        // Keeps track of latest reading for the web dashboard
+
+// Function to handle the Web Dashboard UI
+void handleRoot() {
+  String html = "<!DOCTYPE html><html>";
+  html += "<head><meta name='viewport' content='width=device-width, initial-scale=1.0'>";
+  html += "<meta http-equiv='refresh' content='2'>"; // Auto-refresh the page every 2 seconds
+  html += "<title>Pump Control Dashboard</title>";
+  html += "<style>body { font-family: Arial; text-align: center; margin-top: 50px; background-color: #f4f4f9; color: #333; }";
+  html += ".card { background: white; padding: 30px; border-radius: 10px; display: inline-block; box-shadow: 0 4px 8px rgba(0,0,0,0.1); }";
+  html += ".status { font-size: 24px; font-weight: bold; padding: 10px; border-radius: 5px; margin-top: 20px; }";
+  html += ".on { background-color: #4CAF50; color: white; }";
+  html += ".off { background-color: #f44336; color: white; }";
+  html += "</style></head><body>";
+  
+  html += "<div class='card'>";
+  html += "<h2>Smart Irrigation System</h2>";
+  html += "<p style='font-size: 18px;'>Moisture Value: <strong>" + String(globalMoistureValue) + "</strong></p>";
+  
+  if (isPumpRunning) {
+    html += "<div class='status on'>PUMP STATUS: RUNNING</div>";
+  } else {
+    html += "<div class='status off'>PUMP STATUS: IDLE</div>";
+  }
+  
+  html += "</div></body></html>";
+  
+  server.send(200, "text/html", html);
+}
+
+void setup() {
+  Serial.begin(115200);
+  pinMode(PUMP_PIN, OUTPUT);
+  digitalWrite(PUMP_PIN, LOW); // Start with transistor/pump OFF
+  
+  // Connect to Wi-Fi
+  Serial.println();
+  Serial.print("Connecting to Wi-Fi: ");
+  Serial.println(ssid);
+  WiFi.begin(ssid, password);
+  
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+  
+  Serial.println("");
+  Serial.println("WiFi connected!");
+  Serial.print("Local IP Address to access dashboard: ");
+  Serial.println(WiFi.localIP()); // Look closely at this IP in your Serial Monitor
+
+  // Start Web Server routing
+  server.on("/", handleRoot);
+  server.begin();
+  Serial.println("HTTP Web Server Started.");
+  Serial.println("System Initialized: 5-Second Dry Verification Mode with Local UI");
+}
+
+void loop() {
+  // Handle incoming HTTP requests from the local browser
+  server.handleClient();
+
+  int moistureValue = analogRead(SOIL_SENSOR_PIN);
+  globalMoistureValue = moistureValue; // Store inside global variable for web page use
+  unsigned long currentMillis = millis();
+
+  Serial.print("Moisture: ");
+  Serial.print(moistureValue);
+
+  if (isPumpRunning) {
+    Serial.println(" | PUMP: RUNNING");
+
+    // Stop Conditions: Soil gets wet OR max runtime limit is reached
+    if (moistureValue < DRY_THRESHOLD || (currentMillis - pumpStartMillis >= RUNTIME_LIMIT)) {
+      digitalWrite(PUMP_PIN, LOW);  // Turn off transistor -> Pump OFF
+      isPumpRunning = false;
+      dryStartMillis = 0;           // Clear the dry timer
+      Serial.println(">>> PUMP STOPPED (Target reached or safety timeout)");
+    }
+  } 
+  else {
+    // If the sensor reads DRY
+    if (moistureValue > DRY_THRESHOLD) {
+      // If this is the exact moment it turned dry, start the clock
+      if (dryStartMillis == 0) {
+        dryStartMillis = currentMillis;
+      }
+      
+      unsigned long elapsedDryTime = currentMillis - dryStartMillis;
+      Serial.print(" | PUMP: OFF | Condition: DRY (");
+      Serial.print(elapsedDryTime / 1000);
+      Serial.println("s / 5s)");
+
+      // If it has been dry continuously for 5 seconds, start pumping
+      if (elapsedDryTime >= DRY_DELAY_TIME) {
+        digitalWrite(PUMP_PIN, HIGH); // Turn on transistor -> Pump ON
+        isPumpRunning = true;
+        pumpStartMillis = currentMillis;
+        Serial.println(">>> 5-SECOND GUARD PASSED: STARTING PUMP!");
+      }
+    } 
+    // If the sensor reads WET
+    else {
+      dryStartMillis = 0; // Reset the timer completely because water is detected
+      Serial.println(" | PUMP: OFF | Condition: WET (System Content)");
+    }
+  }
+
+  delay(200); 
+}
