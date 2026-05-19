@@ -1,4 +1,4 @@
-# smart-solar-irregation
+# Smart-Solar-Irrigation
 
 # Smart Automated Irrigation System with Web Dashboard
 
