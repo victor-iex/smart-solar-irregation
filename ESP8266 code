@@ -3,8 +3,8 @@
 #include <ESP8266WebServer.h>
 
 // Wi-Fi Credentials - Change these to match your local network
-const char* ssid = "iPhone";
-const char* password = "yokesh<3";
+const char* ssid = "<SSID_HOTSPOT>";
+const char* password = "<WIFI_PASSWORD";
 
 // Create Web Server instance on port 80
 ESP8266WebServer server(80);
